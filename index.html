@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0d1117">
+    <title>Rain Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #151b23;
+            --surface-2: #1b232d;
+            --border: #252e3a;
+            --text: #e6edf3;
+            --text-2: #9ba8b6;
+            --text-3: #6b7785;
+            --rain: #4ea8ff;
+            --rain-soft: rgba(78, 168, 255, 0.14);
+            --normal: #8b97a6;
+            --alert: #ff6b6b;
+            --alert-soft: rgba(255, 107, 107, 0.1);
+            --radius: 14px;
+            --gap: 12px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            font-feature-settings: 'tnum' 1, 'cv11' 1;
+            -webkit-font-smoothing: antialiased;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+
+        .page {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 0 16px 32px;
+            display: grid;
+            gap: var(--gap);
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-areas: "alerts" "hero" "forecast" "daily" "ytd" "sources" "radar" "about";
+        }
+
+        @media (min-width: 900px) {
+            .page {
+                --gap: 16px;
+                padding: 0 24px 40px;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                grid-template-areas:
+                    "alerts alerts"
+                    "hero hero"
+                    "forecast forecast"
+                    "daily radar"
+                    "ytd ytd"
+                    "sources sources"
+                    "about about";
+            }
+        }
+
+        /* ---------- header ---------- */
+
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background: rgba(13, 17, 23, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            margin-bottom: var(--gap);
+        }
+        .topbar-inner {
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 10px 16px;
+            padding-top: max(10px, env(safe-area-inset-top));
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        @media (min-width: 900px) { .topbar-inner { padding: 12px 24px; } }
+        .place { min-width: 0; }
+        .place h1 { font-size: 1.1rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .updated { font-size: 0.75rem; color: var(--text-3); }
+        .updated .error { color: var(--alert); }
+
+        .zip-form {
+            display: flex;
+            align-items: center;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 2px 2px 2px 12px;
+            flex-shrink: 0;
+        }
+        .zip-form:focus-within { border-color: var(--rain); }
+        .zip-form label { font-size: 0.7rem; color: var(--text-3); margin-right: 6px; }
+        .zip-form input {
+            width: 52px;
+            background: none;
+            border: none;
+            color: var(--text);
+            font: inherit;
+            font-size: 0.95rem;
+            font-weight: 500;
+            outline: none;
+        }
+        .zip-form button {
+            width: 30px; height: 30px;
+            border-radius: 50%;
+            border: none;
+            background: var(--rain);
+            color: #0d1117;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .zip-form button:disabled { opacity: 0.4; cursor: wait; }
+
+        /* ---------- cards ---------- */
+
+        .card {
+            scroll-margin-top: 76px;   /* clear the sticky header when jumped to */
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+            min-width: 0;
+        }
+        @media (min-width: 900px) { .card { padding: 20px; } }
+        .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+        .card-title { font-size: 0.95rem; font-weight: 600; }
+        .card-meta { font-size: 0.75rem; color: var(--text-3); text-align: right; }
+        .eyebrow { font-size: 0.72rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+        .muted { color: var(--text-2); }
+        .faint { color: var(--text-3); }
+        .error { color: var(--alert); font-size: 0.85rem; }
+        .u { font-size: 0.45em; font-weight: 500; color: var(--text-2); margin-left: 2px; }
+
+        /* ---------- alerts ---------- */
+
+        .alerts { grid-area: alerts; display: grid; gap: 8px; }
+        .alerts:empty { display: none; }
+        .alert {
+            background: var(--alert-soft);
+            border: 1px solid rgba(255, 107, 107, 0.45);
+            border-radius: var(--radius);
+            padding: 12px 14px;
+            font-size: 0.85rem;
+        }
+        .alert summary { cursor: pointer; list-style: none; display: flex; gap: 10px; align-items: flex-start; }
+        .alert summary::-webkit-details-marker { display: none; }
+        .alert-icon { color: var(--alert); font-size: 1rem; line-height: 1.3; }
+        .alert strong { color: var(--alert); display: block; font-weight: 600; }
+        .alert .alert-when { color: var(--text-2); font-size: 0.8rem; }
+        .alert-body { margin-top: 10px; color: var(--text-2); white-space: pre-line; font-size: 0.8rem; }
+
+        /* ---------- hero ---------- */
+
+        .hero { grid-area: hero; display: grid; gap: 16px; }
+        @media (min-width: 900px) {
+            .hero { grid-template-columns: 1.4fr 1fr 1fr; align-items: stretch; gap: 20px; }
+            .hero .mini-grid { display: contents; }
+        }
+        .hero-main { min-width: 0; }
+        .hero-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 4px; }
+        .hero-value { font-size: 3.2rem; font-weight: 600; letter-spacing: -0.03em; line-height: 1.05; }
+        .hero-pct { font-size: 0.95rem; color: var(--text-2); text-align: right; white-space: nowrap; }
+        .hero-pct b { display: block; font-size: 1.5rem; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
+        .hero-sub { font-size: 0.8rem; color: var(--text-2); }
+
+        .mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .mini {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+            min-width: 0;
+        }
+        @media (min-width: 900px) { .mini { padding: 16px; display: flex; flex-direction: column; justify-content: space-between; } }
+        .mini-value { font-size: 1.6rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin-top: 2px; }
+        .mini-pct { font-size: 0.8rem; color: var(--text-2); }
+        .mini-pct b { color: var(--text); font-weight: 600; }
+
+        .meter { position: relative; height: 8px; margin: 12px 0 8px; background: rgba(255, 255, 255, 0.06); border-radius: 4px; }
+        .mini .meter { height: 6px; margin: 10px 0 6px; }
+        .meter-fill { position: absolute; inset: 0 auto 0 0; background: var(--rain); border-radius: 4px; transition: width 0.6s ease; }
+        .meter-tick {
+            position: absolute;
+            top: -4px; bottom: -4px;
+            width: 2px; margin-left: -1px;
+            background: var(--text);
+            border-radius: 1px;
+            box-shadow: 0 0 0 2px var(--surface);
+        }
+        .mini .meter-tick { box-shadow: 0 0 0 2px var(--surface-2); }
+
+        /* ---------- forecast strip ---------- */
+
+        .forecast { grid-area: forecast; padding-left: 0; padding-right: 0; }
+        .forecast .card-head { padding: 0 16px; }
+        @media (min-width: 900px) { .forecast .card-head { padding: 0 20px; } }
+        .strip {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            scroll-snap-type: x mandatory;
+            padding: 2px 16px 4px;
+            scrollbar-width: none;
+        }
+        .strip::-webkit-scrollbar { display: none; }
+        @media (min-width: 900px) { .strip { padding: 2px 20px 4px; } }
+        .period {
+            flex: 0 0 auto;
+            width: 84px;
+            scroll-snap-align: start;
+            scroll-margin-left: 16px;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 6px;
+            text-align: center;
+            color: var(--text);
+            font: inherit;
+            cursor: pointer;
+        }
+        .period[aria-pressed="true"] { border-color: var(--rain); background: var(--rain-soft); }
+        .period-name { font-size: 0.72rem; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .period-icon { font-size: 1.6rem; line-height: 1.5; }
+        .period-temp { font-size: 1rem; font-weight: 600; }
+        .period-pop { font-size: 0.72rem; color: var(--rain); min-height: 1.1em; }
+        .period-detail { padding: 12px 16px 0; font-size: 0.85rem; color: var(--text-2); }
+        .period-detail strong { color: var(--text); font-weight: 600; }
+        @media (min-width: 900px) { .period-detail { padding: 14px 20px 0; } }
+
+        /* ---------- daily bars ---------- */
+
+        .daily { grid-area: daily; }
+        .bars { display: flex; align-items: flex-end; gap: 3px; height: 170px; }
+        @media (min-width: 900px) { .bars { height: 200px; } }
+        .bar-col {
+            flex: 1;
+            min-width: 0;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            align-items: center;
+            cursor: pointer;
+            border-radius: 6px;
+        }
+        .bar-col:hover, .bar-col.sel { background: rgba(255, 255, 255, 0.04); }
+        .bar-val { font-size: 0.65rem; color: var(--text-2); margin-bottom: 4px; min-height: 1em; }
+        .bar { width: 64%; max-width: 20px; background: var(--rain); border-radius: 4px 4px 0 0; }
+        .bar.dry { width: 4px; height: 4px !important; border-radius: 50%; background: var(--border); margin-bottom: 0; }
+        .bar-day { font-size: 0.65rem; color: var(--text-3); margin-top: 6px; white-space: nowrap; }
+        .bar-col.sel .bar-day { color: var(--text); }
+        @media (max-width: 480px) { .bar-day.alt { visibility: hidden; } .bar-col.sel .bar-day.alt { visibility: visible; } }
+        .readout { font-size: 0.8rem; color: var(--text-2); margin-top: 10px; min-height: 1.2em; }
+        .readout b { color: var(--text); font-weight: 600; }
+
+        /* ---------- year to date ---------- */
+
+        .ytd { grid-area: ytd; }
+        .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.75rem; color: var(--text-2); margin-bottom: 8px; }
+        .legend span { display: inline-flex; align-items: center; gap: 6px; }
+        .swatch { width: 16px; height: 0; border-top: 2px solid; }
+        .swatch.dashed { border-top-style: dashed; }
+        .ytd-chart { height: 240px; position: relative; touch-action: pan-y; }
+        @media (min-width: 900px) { .ytd-chart { height: 300px; } }
+        .ytd-chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+        .ytd-chart .grid { stroke: var(--border); stroke-width: 1; }
+        .ytd-chart .axis-label { fill: var(--text-3); font-size: 11px; }
+        .ytd-chart .direct-label { fill: var(--text); font-size: 12px; font-weight: 600; }
+        .ytd-chart .normal-label { fill: var(--text-2); font-size: 11px; }
+        .ytd-chart .actual { fill: none; stroke: var(--rain); stroke-width: 2; stroke-linejoin: round; }
+        .ytd-chart .actual-area { fill: url(#rainFade); }
+        .ytd-chart .normal { fill: none; stroke: var(--normal); stroke-width: 2; stroke-dasharray: 5 4; }
+        .ytd-chart .today { stroke: var(--text-3); stroke-width: 1; opacity: 0.5; }
+        .ytd-chart .crosshair { stroke: var(--text); stroke-width: 1; opacity: 0.4; }
+        .ytd-chart .dot { stroke: var(--surface); stroke-width: 2; }
+        .tip {
+            position: absolute;
+            top: 0;
+            pointer-events: none;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 0.78rem;
+            white-space: nowrap;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        /* ---------- sources table ---------- */
+
+        .sources { grid-area: sources; }
+        .src-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .src-table th {
+            font-size: 0.68rem;
+            font-weight: 500;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--text-3);
+            text-align: right;
+            padding: 0 0 8px 8px;
+        }
+        .src-table th:first-child { text-align: left; padding-left: 0; }
+        .src-table td { padding: 10px 0 10px 8px; border-top: 1px solid var(--border); text-align: right; vertical-align: top; white-space: nowrap; }
+        .src-table td:first-child { text-align: left; padding-left: 0; white-space: normal; width: 100%; }
+        .src-name { font-weight: 500; }
+        .src-sub { font-size: 0.72rem; color: var(--text-3); margin-top: 1px; }
+        .src-table tr.total td { border-top: 1px solid var(--text-3); font-weight: 600; }
+        .src-table tr.total .src-name { color: var(--rain); }
+        .chip { display: inline-flex; align-items: center; gap: 4px; }
+        .chip i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+
+        /* ---------- radar ---------- */
+
+        .radar { grid-area: radar; display: flex; flex-direction: column; }
+        .radar-map {
+            position: relative;
+            height: 280px;
+            border-radius: 10px;
+            overflow: hidden;
+            background: var(--surface-2);
+            flex: 1;
+            min-height: 260px;
+        }
+        .radar-map .leaflet-container { width: 100%; height: 100%; background: var(--surface-2); font: inherit; }
+        .radar-map .fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; color: var(--text-2); font-size: 0.85rem; }
+        .radar-controls {
+            position: absolute;
+            left: 10px; bottom: 10px;
+            z-index: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(13, 17, 23, 0.8);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 4px 10px 4px 4px;
+            font-size: 0.75rem;
+        }
+        .radar-controls button {
+            width: 26px; height: 26px;
+            border-radius: 50%;
+            border: none;
+            background: var(--surface-2);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.7rem;
+        }
+        .radar-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 0.75rem; }
+        .radar-foot a { color: var(--rain); text-decoration: none; font-weight: 500; }
+        .leaflet-control-attribution { background: rgba(13, 17, 23, 0.7) !important; color: var(--text-3) !important; font-size: 9px !important; }
+        .leaflet-control-attribution a { color: var(--text-2) !important; }
+        .leaflet-bar a { background: var(--surface) !important; color: var(--text) !important; border-color: var(--border) !important; }
+        .leaflet-tooltip { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); box-shadow: none; font-size: 0.75rem; }
+        .leaflet-tooltip-top:before { border-top-color: var(--border); }
+
+        /* ---------- about ---------- */
+
+        .about { grid-area: about; font-size: 0.8rem; color: var(--text-2); }
+        .about summary { cursor: pointer; font-weight: 500; color: var(--text); }
+        .about ul { margin: 10px 0 0 18px; display: grid; gap: 6px; }
+
+        /* ---------- skeletons ---------- */
+
+        .skel {
+            display: block;
+            border-radius: 6px;
+            background: linear-gradient(90deg, var(--surface-2) 25%, #232c38 50%, var(--surface-2) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.4s infinite linear;
+        }
+        @keyframes shimmer { to { background-position: -200% 0; } }
+        @media (prefers-reduced-motion: reduce) { .skel { animation: none; } .meter-fill { transition: none; } }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="place">
+                <h1 id="place">Rain Dashboard</h1>
+                <div class="updated" id="updated">Loading…</div>
+            </div>
+            <form class="zip-form" id="zip-form">
+                <label for="zip-input">ZIP</label>
+                <input type="text" id="zip-input" value="85937" inputmode="numeric" pattern="\d{5}" maxlength="5" autocomplete="postal-code" enterkeyhint="go">
+                <button type="submit" id="zip-button" aria-label="Load ZIP">→</button>
+            </form>
+        </div>
+    </header>
+
+    <main class="page">
+        <div class="alerts" id="alerts"></div>
+
+        <section class="card hero" id="hero" aria-label="Rain compared with normal"></section>
+
+        <section class="card forecast">
+            <div class="card-head">
+                <div class="card-title">Forecast</div>
+                <div class="card-meta" id="forecast-meta"></div>
+            </div>
+            <div class="strip" id="strip"></div>
+            <div class="period-detail" id="period-detail"></div>
+        </section>
+
+        <section class="card daily">
+            <div class="card-head">
+                <div class="card-title">Last 14 days</div>
+                <div class="card-meta" id="daily-meta"></div>
+            </div>
+            <div class="bars" id="bars"></div>
+            <div class="readout" id="readout"></div>
+        </section>
+
+        <section class="card radar">
+            <div class="card-head">
+                <div class="card-title">Live radar</div>
+                <div class="card-meta" id="radar-meta"></div>
+            </div>
+            <div class="radar-map" id="radar-map"><div class="fallback">Loading map…</div></div>
+            <div class="radar-foot">
+                <span class="faint">ZIP outline and gauges shown</span>
+                <a id="radar-link" href="https://www.rainviewer.com/map.html" target="_blank" rel="noopener">Full screen ↗</a>
+            </div>
+        </section>
+
+        <section class="card ytd">
+            <div class="card-head">
+                <div class="card-title">Year to date vs normal</div>
+                <div class="card-meta" id="ytd-meta"></div>
+            </div>
+            <div class="legend" id="ytd-legend"></div>
+            <div class="ytd-chart" id="ytd-chart"></div>
+        </section>
+
+        <section class="card sources">
+            <div class="card-head">
+                <div class="card-title">Sources</div>
+                <div class="card-meta">Inches · day is the latest 24 h</div>
+            </div>
+            <table class="src-table">
+                <thead><tr><th>Source</th><th>Day</th><th>MTD</th><th>YTD</th></tr></thead>
+                <tbody id="src-body"></tbody>
+            </table>
+        </section>
+
+        <details class="card about">
+            <summary>How this is calculated</summary>
+            <ul>
+                <li>Gauges are CoCoRaHS volunteer stations inside the ZIP's Census boundary (tigerweb.geo.census.gov), most active first. A gauge's morning report covers the previous 24 hours.</li>
+                <li>Each gauge's MTD/YTD totals only the days it reported; its completeness is shown under its name.</li>
+                <li>The averages are built day by day from whichever sources reported that day, so a missed day counts as no data rather than no rain. They run through yesterday, the last complete day.</li>
+                <li>The model is Open-Meteo's historical reanalysis at the ZIP's center point.</li>
+                <li>Normals are NOAA 1991–2020 averages (via data.rcc-acis.org) from the nearest station that has them, so treat them as a guide.</li>
+                <li>Forecast and alerts: National Weather Service (api.weather.gov). Radar: RainViewer. Map: Esri, HERE, Garmin, © OpenStreetMap contributors. ZIP lookup: Zippopotam.us.</li>
+            </ul>
+        </details>
+    </main>
+
+    <script>
+        const COCORAHS = 'https://data.cocorahs.org/export/exportreports.aspx';
+        const SPAN_DAYS = 14;
+        const REFRESH_MS = 30 * 60 * 1000;
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        // ---------- helpers ----------
+
+        const $ = id => document.getElementById(id);
+
+        function esc(s) {
+            return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        function pad(n) { return String(n).padStart(2, '0'); }
+        function isoDate(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+        function usDate(d) { return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}`; }
+        function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+        function shortDate(iso) { const [, m, d] = iso.split('-'); return `${+m}/${+d}`; }
+        function longDate(iso) { return new Date(iso + 'T00:00').toLocaleString('en-US', { month: 'short', day: 'numeric' }); }
+
+        function fmt(v) { return v == null || isNaN(v) ? '–' : v.toFixed(2); }
+
+        function mean(values) {
+            const ok = values.filter(v => v != null && !isNaN(v));
+            return ok.length ? ok.reduce((a, b) => a + b, 0) / ok.length : null;
+        }
+
+        function milesBetween(lat1, lon1, lat2, lon2) {
+            const R = 3958.8, toRad = x => x * Math.PI / 180;
+            const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            return 2 * R * Math.asin(Math.sqrt(a));
+        }
+
+        async function getJson(url) {
+            const res = await fetch(url, { headers: { Accept: 'application/geo+json, application/json' } });
+            if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
+            return res.json();
+        }
+
+        async function getText(url) {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`${res.status} from ${new URL(url).host}`);
+            return res.text();
+        }
+
+        // ---------- data sources ----------
+
+        async function lookupZip(zip) {
+            const res = await fetch(`https://api.zippopotam.us/us/${zip}`);
+            if (res.status === 404) throw new Error(`ZIP ${zip} not found`);
+            if (!res.ok) throw new Error(`ZIP lookup failed (${res.status})`);
+            const data = await res.json();
+            const p = data.places[0];
+            return {
+                zip,
+                town: p['place name'],
+                name: `${p['place name']}, ${p['state abbreviation']}`,
+                state: p['state abbreviation'],
+                lat: parseFloat(p.latitude),
+                lon: parseFloat(p.longitude)
+            };
+        }
+
+        // Rows: { date, station, name, lat, lon, precip } — precip null when not reported, 0 for trace
+        function parseCocorahs(csv) {
+            const rows = [];
+            for (const line of csv.trim().split(/\r?\n/).slice(1)) {
+                const f = line.split(',').map(s => s.trim());
+                if (f.length < 8) continue;
+                const raw = f[7];
+                const precip = raw === 'T' ? 0 : (raw === 'NA' || raw === '' ? null : parseFloat(raw));
+                rows.push({ date: f[0], station: f[3], name: f[4], lat: parseFloat(f[5]), lon: parseFloat(f[6]), precip });
+            }
+            return rows;
+        }
+
+        function cocorahsUrl(params, start, end) {
+            const q = new URLSearchParams({ ReportType: 'Daily', dtf: '1', Format: 'CSV', ReportDateType: 'reportdate', StartDate: usDate(start), EndDate: usDate(end), ...params });
+            return `${COCORAHS}?${q}`;
+        }
+
+        // Census ZIP Code Tabulation Area boundary, as a list of GeoJSON polygons (outer ring + holes)
+        async function loadZipBoundary(zip) {
+            const q = new URLSearchParams({
+                where: `ZCTA5='${zip}'`, outFields: 'ZCTA5', returnGeometry: 'true',
+                outSR: '4326', geometryPrecision: '4', maxAllowableOffset: '0.002', f: 'geojson'
+            });
+            const data = await getJson(`https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1/query?${q}`);
+            const g = data.features && data.features[0] && data.features[0].geometry;
+            if (!g) throw new Error(`No Census boundary for ZIP ${zip}`);
+            return g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+        }
+
+        function inRing(x, y, ring) {
+            let c = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const [x1, y1] = ring[j], [x2, y2] = ring[i];
+                if ((y1 > y) !== (y2 > y) && x < (x2 - x1) * (y - y1) / (y2 - y1) + x1) c = !c;
+            }
+            return c;
+        }
+
+        function inBoundary(polys, lat, lon) {
+            return polys.some(([outer, ...holes]) => inRing(lon, lat, outer) && !holes.some(h => inRing(lon, lat, h)));
+        }
+
+        // Up to two gauges inside the ZIP that reported in the last 14 days, most active first
+        async function findZipStations(loc, today, polys) {
+            const rows = parseCocorahs(await getText(cocorahsUrl({ State: loc.state }, addDays(today, -14), today)));
+            const byStation = new Map();
+            for (const r of rows) {
+                if (r.precip == null || isNaN(r.lat) || !inBoundary(polys, r.lat, r.lon)) continue;
+                const s = byStation.get(r.station) || { ...r, recent: 0, miles: milesBetween(loc.lat, loc.lon, r.lat, r.lon) };
+                s.recent++;
+                byStation.set(r.station, s);
+            }
+            return [...byStation.values()].sort((a, b) => b.recent - a.recent || a.miles - b.miles).slice(0, 2);
+        }
+
+        async function loadStation(station, today) {
+            const jan1 = new Date(today.getFullYear(), 0, 1);
+            const rows = parseCocorahs(await getText(cocorahsUrl({ Station: station.station }, jan1, today)))
+                .filter(r => r.precip != null)
+                .sort((a, b) => a.date.localeCompare(b.date));
+            const monthPrefix = isoDate(today).slice(0, 7);
+            const last = rows[rows.length - 1];
+            // Only treat the latest report as "last day" if it's from today or yesterday
+            const lastIsCurrent = last && last.date >= isoDate(addDays(today, -1));
+            const daily = {};
+            rows.forEach(r => { daily[r.date] = r.precip; });
+            return {
+                ...station,
+                lastDate: last ? last.date : null,
+                last: lastIsCurrent ? last.precip : null,
+                mtd: rows.filter(r => r.date.startsWith(monthPrefix)).reduce((a, r) => a + r.precip, 0),
+                ytd: rows.reduce((a, r) => a + r.precip, 0),
+                reports: rows.length,
+                completeness: rows.length / (Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - jan1) / 864e5) + 1),
+                daily // keyed by report date
+            };
+        }
+
+        async function loadOpenMeteo(loc, today) {
+            const q = new URLSearchParams({
+                latitude: loc.lat, longitude: loc.lon,
+                start_date: `${today.getFullYear()}-01-01`, end_date: isoDate(today),
+                daily: 'precipitation_sum', precipitation_unit: 'inch', timezone: 'auto'
+            });
+            const data = await getJson(`https://archive-api.open-meteo.com/v1/archive?${q}`);
+            const daily = {};
+            data.daily.time.forEach((t, i) => { daily[t] = data.daily.precipitation_sum[i]; });
+            const monthPrefix = isoDate(today).slice(0, 7);
+            const sum = keys => keys.reduce((a, k) => a + (daily[k] ?? 0), 0);
+            const keys = Object.keys(daily);
+            return {
+                last: daily[isoDate(addDays(today, -1))] ?? null,
+                mtd: sum(keys.filter(k => k.startsWith(monthPrefix))),
+                ytd: sum(keys),
+                daily // keyed by calendar day
+            };
+        }
+
+        async function postAcis(endpoint, body) {
+            const res = await fetch(`https://data.rcc-acis.org/${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) throw new Error(`${res.status} from data.rcc-acis.org`);
+            return res.json();
+        }
+
+        // NOAA 1991–2020 normals from the nearest station that has them.
+        // Returns cumulative normal precip for every day of the current year, keyed by ISO date.
+        async function loadNormals(loc, today) {
+            const yesterday = isoDate(addDays(today, -1));
+            const elem = { name: 'pcpn', normal: '1', interval: 'dly', duration: 'ytd', reduce: 'sum' };
+            let best = null;
+            for (const pad of [0.4, 1.0]) {
+                const bbox = [loc.lon - pad, loc.lat - pad, loc.lon + pad, loc.lat + pad].map(v => v.toFixed(3)).join(',');
+                const data = await postAcis('MultiStnData', { bbox, sdate: yesterday, edate: yesterday, meta: 'name,ll,sids', elems: [elem] });
+                for (const s of data.data || []) {
+                    if (!s.meta.ll || !s.meta.sids || isNaN(parseFloat(s.data[0]))) continue;
+                    const miles = milesBetween(loc.lat, loc.lon, s.meta.ll[1], s.meta.ll[0]);
+                    if (!best || miles < best.miles) best = { name: s.meta.name, sid: s.meta.sids[0], miles };
+                }
+                if (best) break;
+            }
+            if (!best) throw new Error('No NOAA normals nearby');
+
+            const year = today.getFullYear();
+            const data = await postAcis('StnData', { sid: best.sid, sdate: `${year}-01-01`, edate: `${year}-12-31`, elems: [elem] });
+            const cum = {};
+            data.data.forEach(([day, v]) => { cum[day] = parseFloat(v); });
+            return { ...best, cum };
+        }
+
+        // Normal rain for a span ending on `endIso`, from the cumulative normals.
+        // Days before Jan 1 borrow the same calendar days' normals so early-January 7-day windows still work.
+        function normalBetween(normals, startIso, endIso) {
+            const cumAt = iso => normals.cum[iso];
+            const year = endIso.slice(0, 4);
+            if (startIso.slice(0, 4) === year) {
+                const before = isoDate(addDays(new Date(startIso + 'T00:00'), -1));
+                return cumAt(endIso) - (before.slice(0, 4) === year ? cumAt(before) : 0);
+            }
+            const yearEnd = cumAt(`${year}-12-31`);
+            const before = `${year}-${isoDate(addDays(new Date(startIso + 'T00:00'), -1)).slice(5)}`;
+            return cumAt(endIso) + (yearEnd - cumAt(before));
+        }
+
+        async function loadNws(loc) {
+            const point = await getJson(`https://api.weather.gov/points/${loc.lat.toFixed(4)},${loc.lon.toFixed(4)}`);
+            const [forecast, alerts] = await Promise.all([
+                getJson(point.properties.forecast),
+                getJson(`https://api.weather.gov/alerts/active?point=${loc.lat.toFixed(4)},${loc.lon.toFixed(4)}`).catch(() => ({ features: [] }))
+            ]);
+            return { office: point.properties.cwa, periods: forecast.properties.periods, alerts: alerts.features };
+        }
+
+        // ---------- series ----------
+
+        // Daily average from Jan 1 through yesterday, with 7-day, MTD and YTD running totals.
+        function buildDailySeries(today, stations, om) {
+            const series = [];
+            let ytd = 0, mtd = 0, month = null;
+            const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            for (let d = new Date(today.getFullYear(), 0, 1); d < todayMidnight; d = addDays(d, 1)) {
+                const day = isoDate(d);
+                // A gauge's morning report on day D+1 measures rain that fell on day D
+                const reportDay = isoDate(addDays(d, 1));
+                // A day a gauge didn't report is no data, not zero: the average uses whichever sources reported
+                const gauges = stations.map(s => s.daily[reportDay] ?? null);
+                const sources = [...gauges, ...(om ? [om.daily[day] ?? null] : [])];
+                const value = mean(sources);
+                if (day.slice(0, 7) !== month) { month = day.slice(0, 7); mtd = 0; }
+                ytd += value ?? 0;
+                mtd += value ?? 0;
+                const week = series.slice(-6).reduce((a, p) => a + (p.value ?? 0), value ?? 0);
+                series.push({ day, value, week, mtd, ytd });
+            }
+            return series;
+        }
+
+        // [last day, MTD, YTD] from a daily series that ends yesterday
+        function seriesTotals(series, today) {
+            const last = series[series.length - 1];
+            if (!last) return [null, null, null];
+            const sameMonth = last.day.slice(0, 7) === isoDate(today).slice(0, 7);
+            return [last.value, sameMonth ? last.mtd : 0, last.ytd];
+        }
+
+        // ---------- skeletons ----------
+
+        function skel(h, w = '100%') { return `<span class="skel" style="height:${h}px;width:${w}"></span>`; }
+
+        function showSkeletons() {
+            $('hero').innerHTML = `
+                <div class="hero-main">${skel(12, '30%')}<div style="height:10px"></div>${skel(52, '60%')}<div style="height:16px"></div>${skel(8)}</div>
+                <div class="mini-grid">${skel(96)}${skel(96)}</div>`;
+            $('strip').innerHTML = Array.from({ length: 6 }, () => `<span class="skel" style="flex:0 0 84px;height:112px;border-radius:12px"></span>`).join('');
+            $('period-detail').innerHTML = skel(14, '80%');
+            $('bars').innerHTML = skel(170);
+            $('readout').innerHTML = '';
+            $('ytd-chart').innerHTML = skel(240);
+            $('ytd-legend').innerHTML = '';
+            $('src-body').innerHTML = Array.from({ length: 5 }, () => `<tr><td colspan="4">${skel(18)}</td></tr>`).join('');
+        }
+
+        // ---------- hero ----------
+
+        function meter(value, normal) {
+            const hasNormal = normal != null && !isNaN(normal);
+            const scale = Math.max(value ?? 0, hasNormal ? normal : 0, 0.01) * 1.15;
+            return `<div class="meter" role="img" aria-label="${fmt(value)} inches${hasNormal ? `, normal ${fmt(normal)} inches` : ''}">
+                        <div class="meter-fill" style="width:${((value ?? 0) / scale * 100).toFixed(1)}%"></div>
+                        ${hasNormal ? `<div class="meter-tick" style="left:${(normal / scale * 100).toFixed(1)}%"></div>` : ''}
+                    </div>`;
+        }
+
+        function pctOf(value, normal) {
+            return normal != null && !isNaN(normal) && normal > 0 ? Math.round(value / normal * 100) : null;
+        }
+
+        function miniCard(label, value, normal) {
+            const pct = pctOf(value, normal);
+            return `<div class="mini">
+                        <div class="eyebrow">${esc(label)}</div>
+                        <div class="mini-value">${fmt(value)}<span class="u">in</span></div>
+                        ${meter(value, normal)}
+                        <div class="mini-pct">${pct != null ? `<b>${pct}%</b> of normal ${fmt(normal)}"` : 'Normal unavailable'}</div>
+                    </div>`;
+        }
+
+        function renderHero(series, normals, normalsErr) {
+            const last = series[series.length - 1];
+            if (!last) { $('hero').innerHTML = '<div class="error">No rain data available yet this year.</div>'; return; }
+            const end = last.day;
+            const endDate = new Date(end + 'T00:00');
+            const monthName = endDate.toLocaleString('en-US', { month: 'long' });
+            const n = normals ? {
+                week: normalBetween(normals, isoDate(addDays(endDate, -6)), end),
+                mtd: normalBetween(normals, `${end.slice(0, 7)}-01`, end),
+                ytd: normals.cum[end]
+            } : {};
+            const pct = pctOf(last.ytd, n.ytd);
+            const diff = n.ytd != null ? last.ytd - n.ytd : null;
+            $('hero').innerHTML = `
+                <div class="hero-main">
+                    <div class="eyebrow">${end.slice(0, 4)} so far</div>
+                    <div class="hero-row">
+                        <span class="hero-value">${fmt(last.ytd)}<span class="u">in</span></span>
+                        <span class="hero-pct">${pct != null ? `<b>${pct}%</b>of normal` : ''}</span>
+                    </div>
+                    ${meter(last.ytd, n.ytd)}
+                    <div class="hero-sub">${diff != null
+                        ? `${fmt(Math.abs(diff))}" ${diff >= 0 ? 'above' : 'below'} the ${fmt(n.ytd)}" normal by ${longDate(end)}`
+                        : `<span class="error">Normals unavailable${normalsErr ? `: ${esc(normalsErr.message)}` : ''}</span>`}</div>
+                </div>
+                <div class="mini-grid">
+                    ${miniCard('Last 7 days', last.week, n.week)}
+                    ${miniCard(`${monthName}`, last.mtd, n.mtd)}
+                </div>`;
+        }
+
+        // ---------- alerts & forecast ----------
+
+        // NWS often has several overlapping alerts of the same type (e.g. a watch and its update);
+        // keep only the most recently issued one per event type
+        function latestPerEvent(alerts) {
+            const byEvent = new Map();
+            for (const a of alerts || []) {
+                const p = a.properties;
+                const issued = Date.parse(p.sent || p.effective || 0) || 0;
+                const prev = byEvent.get(p.event);
+                if (!prev || issued > prev.issued) byEvent.set(p.event, { a, issued });
+            }
+            return [...byEvent.values()].map(v => v.a);
+        }
+
+        function renderAlerts(alerts) {
+            $('alerts').innerHTML = latestPerEvent(alerts).map(a => {
+                const p = a.properties;
+                const until = p.ends || p.expires;
+                const when = until ? `Until ${new Date(until).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : '';
+                return `<details class="alert">
+                            <summary><span class="alert-icon">⚠</span><span><strong>${esc(p.event)}</strong><span class="alert-when">${esc(when)}${p.senderName ? ` · ${esc(p.senderName)}` : ''}</span></span></summary>
+                            <div class="alert-body">${esc(p.description || p.headline || '')}</div>
+                        </details>`;
+            }).join('');
+        }
+
+        function weatherIcon(text, isDay) {
+            const t = text.toLowerCase();
+            if (t.includes('thunder')) return '⛈️';
+            if (t.includes('snow') || t.includes('flurr')) return '🌨️';
+            if (t.includes('sleet') || t.includes('freezing')) return '🌨️';
+            if (t.includes('rain') || t.includes('shower') || t.includes('drizzle')) return '🌧️';
+            if (t.includes('fog') || t.includes('haze') || t.includes('smoke')) return '🌫️';
+            if (t.includes('mostly cloudy') || t === 'cloudy' || t.includes('overcast')) return '☁️';
+            if (t.includes('partly') || t.includes('mostly sunny') || t.includes('mostly clear')) return isDay ? '⛅' : '☁️';
+            if (t.includes('wind') || t.includes('breezy')) return '💨';
+            return isDay ? '☀️' : '🌙';
+        }
+
+        function renderForecast(nws, err) {
+            if (err) {
+                $('strip').innerHTML = '';
+                $('period-detail').innerHTML = `<span class="error">Forecast unavailable: ${esc(err.message)}</span>`;
+                $('forecast-meta').textContent = '';
+                return;
+            }
+            const periods = nws.periods.slice(0, 10);
+            $('forecast-meta').textContent = `NWS ${nws.office}`;
+            $('strip').innerHTML = periods.map((p, i) => {
+                const pop = p.probabilityOfPrecipitation && p.probabilityOfPrecipitation.value;
+                const name = p.name
+                    .replace(/^(This Afternoon|This Morning)$/, 'Today')
+                    .replace(/(Sun|Mon|Tues|Wednes|Thurs|Fri|Satur)day/, (_, d) => d.slice(0, 3))
+                    .replace(' Night', ' night');
+                return `<button class="period" data-i="${i}" aria-pressed="${i === 0}">
+                            <div class="period-name">${esc(name)}</div>
+                            <div class="period-icon" aria-hidden="true">${weatherIcon(p.shortForecast, p.isDaytime)}</div>
+                            <div class="period-temp">${esc(p.temperature)}°</div>
+                            <div class="period-pop">${pop ? `💧${esc(pop)}%` : ''}</div>
+                        </button>`;
+            }).join('');
+            const select = i => {
+                const p = periods[i];
+                $('strip').querySelectorAll('.period').forEach(b => b.setAttribute('aria-pressed', b.dataset.i == i));
+                $('period-detail').innerHTML = `<strong>${esc(p.name)}:</strong> ${esc(p.detailedForecast)}`;
+            };
+            $('strip').onclick = e => { const b = e.target.closest('.period'); if (b) select(+b.dataset.i); };
+            select(0);
+        }
+
+        // ---------- daily bars ----------
+
+        function renderDaily(series) {
+            const days = series.slice(-SPAN_DAYS);
+            const max = Math.max(0.1, ...days.map(d => d.value ?? 0));
+            const total = days.reduce((a, d) => a + (d.value ?? 0), 0);
+            // Label only the three wettest days so the bars stay readable on a phone
+            const labeled = new Set(days.filter(d => d.value >= 0.01).sort((a, b) => b.value - a.value).slice(0, 3).map(d => d.day));
+            $('daily-meta').textContent = days.length ? `${longDate(days[0].day)} – ${longDate(days[days.length - 1].day)}` : '';
+            $('bars').innerHTML = days.map((d, i) => {
+                const dayLabel = new Date(d.day + 'T00:00').getDate();
+                const wet = d.value >= 0.005;
+                // On phones only every other day is labeled, counting back from yesterday
+                const alt = (days.length - 1 - i) % 2 ? ' alt' : '';
+                return `<div class="bar-col" data-i="${i}" title="${esc(longDate(d.day))}: ${fmt(d.value)} in">
+                            <span class="bar-val">${labeled.has(d.day) ? fmt(d.value) : ''}</span>
+                            <div class="bar${wet ? '' : ' dry'}" style="height:${wet ? Math.max((d.value / max) * 78, 3) : 0}%"></div>
+                            <span class="bar-day${alt}">${dayLabel}</span>
+                        </div>`;
+            }).join('');
+            const readDefault = `<b>${total.toFixed(2)}"</b> over ${days.length} days · tap a bar for that day`;
+            $('readout').innerHTML = readDefault;
+            const cols = $('bars').querySelectorAll('.bar-col');
+            const select = i => {
+                cols.forEach(c => c.classList.toggle('sel', c.dataset.i == i));
+                const d = days[i];
+                $('readout').innerHTML = `<b>${longDate(d.day)}: ${fmt(d.value)}"</b>${d.value >= 0.005 ? '' : ' · dry'}`;
+            };
+            $('bars').onclick = e => { const c = e.target.closest('.bar-col'); if (c) select(+c.dataset.i); };
+            $('bars').onpointerover = e => { const c = e.target.closest('.bar-col'); if (c && e.pointerType === 'mouse') select(+c.dataset.i); };
+            $('bars').onpointerleave = e => { if (e.pointerType === 'mouse') { cols.forEach(c => c.classList.remove('sel')); $('readout').innerHTML = readDefault; } };
+        }
+
+        // ---------- year-to-date chart ----------
+
+        let ytdState = null;
+
+        function niceStep(maxV) {
+            const raw = maxV / 4;
+            const mag = 10 ** Math.floor(Math.log10(raw));
+            return [1, 2, 5, 10].map(m => m * mag).find(s => s >= raw);
+        }
+
+        function renderYtdChart() {
+            const el = $('ytd-chart');
+            if (!ytdState || !ytdState.series.length) return;
+            const { series, normals, year } = ytdState;
+            const W = el.clientWidth, H = el.clientHeight;
+            const narrow = W < 520;
+            const m = { top: 16, right: narrow ? 8 : 84, bottom: 24, left: 34 };
+            const pw = W - m.left - m.right, ph = H - m.top - m.bottom;
+
+            const jan1 = new Date(year, 0, 1);
+            const daysInYear = Math.round((new Date(year + 1, 0, 1) - jan1) / 864e5);
+            const idx = iso => Math.round((new Date(iso + 'T00:00') - jan1) / 864e5);
+            const actual = series.map(p => ({ i: idx(p.day), day: p.day, v: p.ytd }));
+            const normal = normals ? Object.keys(normals.cum).sort().map(day => ({ i: idx(day), day, v: normals.cum[day] })) : [];
+
+            const maxV = Math.max(0.5, ...actual.map(p => p.v), ...normal.map(p => p.v));
+            const step = niceStep(maxV);
+            const yMax = Math.ceil(maxV / step) * step;
+            const X = i => m.left + (i / (daysInYear - 1)) * pw;
+            const Y = v => m.top + ph - (v / yMax) * ph;
+            const path = pts => pts.map((p, k) => `${k ? 'L' : 'M'}${X(p.i).toFixed(1)},${Y(p.v).toFixed(1)}`).join('');
+
+            let svg = `<defs><linearGradient id="rainFade" x1="0" y1="0" x2="0" y2="1">
+                           <stop offset="0%" stop-color="var(--rain)" stop-opacity="0.28"/>
+                           <stop offset="100%" stop-color="var(--rain)" stop-opacity="0"/>
+                       </linearGradient></defs>`;
+            for (let v = 0; v <= yMax + 1e-9; v += step) {
+                svg += `<line class="grid" x1="${m.left}" x2="${m.left + pw}" y1="${Y(v)}" y2="${Y(v)}"/>`;
+                svg += `<text class="axis-label" x="${m.left - 6}" y="${Y(v) + 4}" text-anchor="end">${+v.toFixed(2)}"</text>`;
+            }
+            for (let mo = 0; mo < 12; mo++) {
+                if (narrow && mo % 2) continue;
+                const i = idx(isoDate(new Date(year, mo, 15)));
+                const label = new Date(year, mo, 1).toLocaleString('en-US', { month: 'short' });
+                svg += `<text class="axis-label" x="${X(i)}" y="${H - 6}" text-anchor="middle">${label}</text>`;
+            }
+
+            const last = actual[actual.length - 1];
+            svg += `<line class="today" x1="${X(last.i)}" x2="${X(last.i)}" y1="${m.top}" y2="${m.top + ph}"/>`;
+            if (normal.length) svg += `<path class="normal" d="${path(normal)}"/>`;
+            svg += `<path class="actual-area" d="${path(actual)}L${X(last.i)},${Y(0)}L${X(actual[0].i)},${Y(0)}Z"/>`;
+            svg += `<path class="actual" d="${path(actual)}"/>`;
+            svg += `<circle class="dot" cx="${X(last.i)}" cy="${Y(last.v)}" r="5" fill="var(--rain)"/>`;
+
+            // Direct labels: this year at its latest point (flipped left if it would overflow), normal at year end
+            const label = `${fmt(last.v)}"`;
+            const flip = X(last.i) + 60 > W;
+            svg += `<text class="direct-label" x="${X(last.i) + (flip ? -10 : 10)}" y="${Y(last.v) - 8}" text-anchor="${flip ? 'end' : 'start'}">${label}</text>`;
+            if (normal.length && !narrow) {
+                const end = normal[normal.length - 1];
+                svg += `<text class="normal-label" x="${X(end.i) + 6}" y="${Y(end.v) + 4}">Normal ${fmt(end.v)}"</text>`;
+            }
+
+            svg += `<g id="ytd-hover" style="display:none">
+                        <line class="crosshair" y1="${m.top}" y2="${m.top + ph}"/>
+                        <circle class="dot hv-normal" r="4" fill="var(--normal)"/>
+                        <circle class="dot hv-actual" r="5" fill="var(--rain)"/>
+                    </g>
+                    <rect x="${m.left}" y="${m.top}" width="${pw}" height="${ph}" fill="transparent" id="ytd-hit"/>`;
+
+            el.innerHTML = `<svg role="img" aria-label="Year-to-date rain ${fmt(last.v)} inches${normal.length ? ` versus normal ${fmt(normals.cum[last.day])} inches` : ''}">${svg}</svg>
+                            <div class="tip" id="ytd-tip" hidden></div>`;
+
+            const actualByI = new Map(actual.map(p => [p.i, p]));
+            const normalByI = new Map(normal.map(p => [p.i, p]));
+            const hover = el.querySelector('#ytd-hover'), tip = el.querySelector('#ytd-tip');
+            const hit = el.querySelector('#ytd-hit');
+            const show = e => {
+                const rect = el.getBoundingClientRect();
+                const i = Math.max(0, Math.min(daysInYear - 1, Math.round(((e.clientX - rect.left - m.left) / pw) * (daysInYear - 1))));
+                const a = actualByI.get(i), nm = normalByI.get(i);
+                if (!a && !nm) return;
+                const x = X(i);
+                hover.style.display = '';
+                hover.querySelector('line').setAttribute('x1', x);
+                hover.querySelector('line').setAttribute('x2', x);
+                const setDot = (sel, p) => {
+                    const c = hover.querySelector(sel);
+                    c.style.display = p ? '' : 'none';
+                    if (p) { c.setAttribute('cx', x); c.setAttribute('cy', Y(p.v)); }
+                };
+                setDot('.hv-actual', a);
+                setDot('.hv-normal', nm);
+                const date = new Date(year, 0, 1 + i).toLocaleString('en-US', { month: 'short', day: 'numeric' });
+                let html = `<div class="muted">${date}</div>`;
+                if (a) html += `<div><b>${year}: ${fmt(a.v)}"</b></div>`;
+                if (nm) html += `<div class="muted">Normal: ${fmt(nm.v)}"</div>`;
+                if (a && nm && nm.v > 0) html += `<div>${Math.round(a.v / nm.v * 100)}% of normal</div>`;
+                tip.innerHTML = html;
+                tip.hidden = false;
+                const tw = tip.offsetWidth;
+                tip.style.left = `${x + 12 + tw > W ? x - 12 - tw : x + 12}px`;
+                tip.style.top = `${m.top}px`;
+            };
+            const hide = () => { hover.style.display = 'none'; tip.hidden = true; };
+            hit.addEventListener('pointermove', show);
+            hit.addEventListener('pointerdown', show);
+            hit.addEventListener('pointerleave', hide);
+
+            $('ytd-legend').innerHTML = `
+                <span><i class="swatch" style="border-color:var(--rain)"></i>${year}</span>
+                ${normal.length ? '<span><i class="swatch dashed" style="border-color:var(--normal)"></i>Normal</span>' : ''}`;
+            $('ytd-meta').textContent = normals ? `Normal: ${normals.name.replace(/\b\w+/g, w => w[0] + w.slice(1).toLowerCase())}` : '';
+        }
+
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(renderYtdChart, 150);
+        });
+
+        // ---------- sources table ----------
+
+        function completenessChip(c) {
+            const pct = Math.round(c * 100);
+            const fill = pct >= 95 ? 'var(--rain)' : pct >= 80 ? 'rgba(78,168,255,0.5)' : 'transparent';
+            return `<span class="chip"><i style="background:${fill};border:1.5px solid var(--rain)"></i>${pct}% of days</span>`;
+        }
+
+        function renderSources({ stations, stationErrors, gaugeSeries, om, omErr, series, today }) {
+            const row = (name, sub, vals, cls = '') =>
+                `<tr class="${cls}"><td><div class="src-name">${name}</div>${sub ? `<div class="src-sub">${sub}</div>` : ''}</td>${vals.map(v => `<td>${fmt(v)}</td>`).join('')}</tr>`;
+            let html = '';
+            stations.forEach(st => {
+                html += row(esc(st.station),
+                    `${esc(st.name)} · ${completenessChip(st.completeness)}${st.lastDate && st.lastDate < isoDate(addDays(today, -1)) ? ` · last ${shortDate(st.lastDate)}` : ''}`,
+                    [st.last, st.mtd, st.ytd]);
+            });
+            stationErrors.forEach(msg => { html += `<tr><td colspan="4"><span class="faint">${esc(msg)}</span></td></tr>`; });
+            if (stations.length > 1) html += row('Gauge average', 'Daily mean of the gauges that reported', seriesTotals(gaugeSeries, today));
+            html += om
+                ? row('Open-Meteo model', 'Reanalysis at ZIP center', [om.last, om.mtd, om.ytd])
+                : `<tr><td colspan="4"><span class="error">Model unavailable: ${esc(omErr.message)}</span></td></tr>`;
+            html += row('All-source average', 'Through yesterday · used above', seriesTotals(series, today), 'total');
+            $('src-body').innerHTML = html;
+        }
+
+        // ---------- radar ----------
+
+        let map = null, mapLayers = null, radarTimer = null;
+
+        async function renderRadar(loc, polys, stations) {
+            $('radar-link').href = `https://www.rainviewer.com/map.html?loc=${loc.lat},${loc.lon},8`;
+            const box = $('radar-map');
+            if (!window.L) {
+                box.innerHTML = '<div class="fallback">Map library didn\'t load. Use “Full screen” for radar.</div>';
+                return;
+            }
+            if (!map) {
+                box.innerHTML = '';
+                map = L.map(box, { zoomControl: true, attributionControl: true, scrollWheelZoom: false, minZoom: 5, maxZoom: 11 });
+                const esri = 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas';
+                L.tileLayer(`${esri}/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
+                    maxNativeZoom: 16,
+                    attribution: 'Esri, HERE, Garmin, © OpenStreetMap · <a href="https://www.rainviewer.com">RainViewer</a>'
+                }).addTo(map);
+                // Place labels sit above the radar so town names stay readable
+                map.createPane('labels').style.zIndex = 450;
+                map.getPane('labels').style.pointerEvents = 'none';
+                L.tileLayer(`${esri}/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, { maxNativeZoom: 16, pane: 'labels' }).addTo(map);
+                mapLayers = L.layerGroup().addTo(map);
+                // Keep the map sized correctly when the layout changes between phone and desktop
+                new ResizeObserver(() => map.invalidateSize()).observe(box);
+            }
+            mapLayers.clearLayers();
+            clearInterval(radarTimer);
+            box.querySelector('.radar-controls')?.remove();
+
+            const outline = polys
+                ? L.polygon(polys.map(p => p.map(ring => ring.map(([x, y]) => [y, x]))), { color: '#e6edf3', weight: 1.5, opacity: 0.7, fill: false, dashArray: '4 4' }).addTo(mapLayers)
+                : null;
+            stations.forEach(st => {
+                L.circleMarker([st.lat, st.lon], { radius: 5, color: '#0d1117', weight: 2, fillColor: '#e6edf3', fillOpacity: 1 })
+                    .bindTooltip(`${st.station} · ${st.name}`, { direction: 'top' }).addTo(mapLayers);
+            });
+            if (outline) map.fitBounds(outline.getBounds(), { padding: [20, 20], maxZoom: 9 });
+            else map.setView([loc.lat, loc.lon], 8);
+
+            try {
+                // The radar index occasionally drops a connection; retry briefly before giving up
+                let data;
+                for (let attempt = 0; ; attempt++) {
+                    try { data = await getJson('https://api.rainviewer.com/public/weather-maps.json'); break; }
+                    catch (e) { if (attempt >= 2) throw e; await new Promise(r => setTimeout(r, 1500 * (attempt + 1))); }
+                }
+                const frames = data.radar.past;
+                // Radar tiles only exist to zoom 7; Leaflet scales them up beyond that
+                const layers = frames.map(f => L.tileLayer(`${data.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`, { opacity: 0, maxNativeZoom: 7, maxZoom: 11, zIndex: 300 }).addTo(mapLayers));
+                const timeOf = f => new Date(f.time * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                let cur = frames.length - 1, playing = !reducedMotion;
+                const showFrame = i => {
+                    layers[cur].setOpacity(0);
+                    cur = i;
+                    layers[cur].setOpacity(0.75);
+                    label.textContent = timeOf(frames[cur]);
+                };
+                const controls = document.createElement('div');
+                controls.className = 'radar-controls';
+                controls.innerHTML = `<button type="button" aria-label="Play or pause radar loop"></button><span></span>`;
+                box.appendChild(controls);
+                const btn = controls.querySelector('button'), label = controls.querySelector('span');
+                L.DomEvent.disableClickPropagation(controls);
+                const tick = () => {
+                    // Linger on the latest frame before looping
+                    if (cur === frames.length - 1 && tick.hold++ < 3) return;
+                    tick.hold = 0;
+                    showFrame((cur + 1) % frames.length);
+                };
+                tick.hold = 0;
+                const setPlaying = p => {
+                    playing = p;
+                    btn.textContent = p ? '❚❚' : '▶';
+                    clearInterval(radarTimer);
+                    if (p) radarTimer = setInterval(tick, 500);
+                };
+                btn.onclick = () => setPlaying(!playing);
+                layers[cur].setOpacity(0.75);
+                label.textContent = timeOf(frames[cur]);
+                setPlaying(playing);
+                $('radar-meta').textContent = `${frames.length} frames · last 2 h`;
+            } catch (e) {
+                $('radar-meta').innerHTML = '<span class="error">Radar unavailable</span>';
+            }
+        }
+
+        // ---------- updated label & refresh ----------
+
+        let lastUpdated = null, failedSources = 0, currentZip = null;
+
+        function renderUpdated() {
+            if (!lastUpdated) return;
+            const mins = Math.round((Date.now() - lastUpdated) / 60000);
+            const ago = mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : `${Math.floor(mins / 60)} h ago`;
+            $('updated').innerHTML = `Updated ${ago}${failedSources ? ` · <span class="error">${failedSources} source${failedSources > 1 ? 's' : ''} unavailable</span>` : ''}`;
+        }
+        setInterval(renderUpdated, 60000);
+        setInterval(() => { if (!document.hidden && currentZip) updateLocationFromZip(currentZip, { quiet: true }); }, REFRESH_MS);
+
+        // ---------- main ----------
+
+        let loadToken = 0;
+
+        async function updateLocationFromZip(zip, { quiet = false } = {}) {
+            if (!/^\d{5}$/.test(zip)) {
+                $('updated').innerHTML = '<span class="error">Enter a 5-digit US ZIP code</span>';
+                return;
+            }
+            const token = ++loadToken;
+            const stale = () => token !== loadToken;
+            $('zip-button').disabled = true;
+            if (!quiet) { showSkeletons(); $('updated').textContent = 'Loading…'; }
+
+            try {
+                const loc = await lookupZip(zip);
+                if (stale()) return;
+                currentZip = zip;
+                try { localStorage.setItem('rain-zip', zip); } catch (e) { /* storage unavailable */ }
+                $('place').textContent = loc.name;
+                document.title = `${loc.town} Rain`;
+
+                const today = new Date();
+                const boundaryP = loadZipBoundary(zip);
+                const stationsP = boundaryP
+                    .then(polys => findZipStations(loc, today, polys))
+                    .then(list => Promise.allSettled(list.map(s => loadStation(s, today))));
+                const [stRes, omRes, nwsRes, normRes, bndRes] = await Promise.allSettled(
+                    [stationsP, loadOpenMeteo(loc, today), loadNws(loc), loadNormals(loc, today), boundaryP]);
+                if (stale()) return;
+
+                // Gauges
+                const stations = [], stationErrors = [];
+                if (stRes.status === 'fulfilled') {
+                    stRes.value.forEach(r => r.status === 'fulfilled' ? stations.push(r.value) : stationErrors.push(r.reason.message));
+                    if (!stRes.value.length) stationErrors.push('No active CoCoRaHS gauge inside this ZIP');
+                } else {
+                    stationErrors.push(stRes.reason.message);
+                }
+                const om = omRes.status === 'fulfilled' ? omRes.value : null;
+                const normals = normRes.status === 'fulfilled' ? normRes.value : null;
+
+                // Averages are built day by day from whichever sources reported, so gaps don't count as dry
+                const gaugeSeries = stations.length ? buildDailySeries(today, stations, null) : [];
+                const series = buildDailySeries(today, stations, om);
+
+                renderHero(series, normals, normRes.reason);
+                renderDaily(series);
+                ytdState = { series, normals, year: today.getFullYear() };
+                renderYtdChart();
+                renderSources({ stations, stationErrors, gaugeSeries, om, omErr: omRes.reason, series, today });
+                renderAlerts(nwsRes.status === 'fulfilled' ? nwsRes.value.alerts : []);
+                renderForecast(nwsRes.value, nwsRes.status === 'rejected' ? nwsRes.reason : null);
+                renderRadar(loc, bndRes.status === 'fulfilled' ? bndRes.value : null, stations);
+
+                failedSources = [stRes, omRes, nwsRes, normRes].filter(r => r.status === 'rejected').length;
+                lastUpdated = Date.now();
+                renderUpdated();
+            } catch (err) {
+                if (stale()) return;
+                $('updated').innerHTML = `<span class="error">${esc(err.message)}</span>`;
+            } finally {
+                if (!stale()) $('zip-button').disabled = false;
+            }
+        }
+
+        $('zip-form').addEventListener('submit', e => {
+            e.preventDefault();
+            $('zip-input').blur();
+            updateLocationFromZip($('zip-input').value.trim());
+        });
+
+        let savedZip = null;
+        try { savedZip = localStorage.getItem('rain-zip'); } catch (e) { /* storage unavailable */ }
+        if (savedZip) $('zip-input').value = savedZip;
+        // Leaflet loads with `defer`, so wait for the document before the first load
+        window.addEventListener('DOMContentLoaded', () => updateLocationFromZip($('zip-input').value.trim()));
+    </script>
+</body>
+</html>
