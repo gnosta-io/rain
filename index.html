@@ -337,6 +337,8 @@
         .src-sub { font-size: 0.72rem; color: var(--text-3); margin-top: 1px; }
         .src-table tr.total td { border-top: 1px solid var(--text-3); font-weight: 600; }
         .src-table tr.total .src-name { color: var(--rain); }
+        .src-table tr.excluded td:not(:first-child), .src-table tr.excluded .src-name { color: var(--text-3); text-decoration: line-through; text-decoration-color: rgba(107, 119, 133, 0.6); }
+        .excl { color: #f0b45a; }
         .chip { display: inline-flex; align-items: center; gap: 4px; }
         .chip i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 
@@ -486,6 +488,7 @@
             <ul>
                 <li>Gauges are CoCoRaHS volunteer stations inside the ZIP's Census boundary (tigerweb.geo.census.gov), most active first. A gauge's morning report covers the previous 24 hours.</li>
                 <li>Each gauge's MTD/YTD totals only the days it reported; its completeness is shown under its name.</li>
+                <li>Each gauge is compared with the model over the days it reported this year. A gauge more than 10% above or below the model is excluded from every average (it stays listed, struck through). The check is skipped until the model has at least 0.25" on those days, since tiny totals make percentages meaningless.</li>
                 <li>The averages are built day by day from whichever sources reported that day, so a missed day counts as no data rather than no rain. They run through yesterday, the last complete day.</li>
                 <li>The model is Open-Meteo's historical reanalysis at the ZIP's center point.</li>
                 <li>Normals are NOAA 1991–2020 averages (via data.rcc-acis.org) from the nearest station that has them, so treat them as a guide.</li>
@@ -497,6 +500,7 @@
     <script>
         const COCORAHS = 'https://data.cocorahs.org/export/exportreports.aspx';
         const SPAN_DAYS = 14;
+        const MODEL_TOLERANCE = 0.10;   // gauges further than this from the model are excluded
         const REFRESH_MS = 30 * 60 * 1000;
         const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -738,6 +742,19 @@
                 series.push({ day, value, week, mtd, ytd });
             }
             return series;
+        }
+
+        // How far a gauge's total is from the model's, over only the days the gauge reported
+        // (e.g. 0.12 = gauge 12% above). Null when the model saw too little rain on those days to compare.
+        function gaugeVsModel(st, om) {
+            let gauge = 0, model = 0;
+            for (const [reportDay, v] of Object.entries(st.daily)) {
+                const day = isoDate(addDays(new Date(reportDay + 'T00:00'), -1));
+                if (om.daily[day] == null) continue;
+                gauge += v;
+                model += om.daily[day];
+            }
+            return model >= 0.25 ? gauge / model - 1 : null;
         }
 
         // [last day, MTD, YTD] from a daily series that ends yesterday
@@ -1058,13 +1075,20 @@
             const row = (name, sub, vals, cls = '') =>
                 `<tr class="${cls}"><td><div class="src-name">${name}</div>${sub ? `<div class="src-sub">${sub}</div>` : ''}</td>${vals.map(v => `<td>${fmt(v)}</td>`).join('')}</tr>`;
             let html = '';
+            const vsModel = st => {
+                if (st.vsModel == null) return '';
+                const pct = `${st.vsModel >= 0 ? '+' : '−'}${Math.round(Math.abs(st.vsModel) * 100)}% vs model`;
+                return st.excluded ? ` · <span class="excl">Excluded: ${pct}</span>` : ` · ${pct}`;
+            };
             stations.forEach(st => {
                 html += row(esc(st.station),
-                    `${esc(st.name)} · ${completenessChip(st.completeness)}${st.lastDate && st.lastDate < isoDate(addDays(today, -1)) ? ` · last ${shortDate(st.lastDate)}` : ''}`,
-                    [st.last, st.mtd, st.ytd]);
+                    `${esc(st.name)} · ${completenessChip(st.completeness)}${st.lastDate && st.lastDate < isoDate(addDays(today, -1)) ? ` · last ${shortDate(st.lastDate)}` : ''}${vsModel(st)}`,
+                    [st.last, st.mtd, st.ytd], st.excluded ? 'excluded' : '');
             });
             stationErrors.forEach(msg => { html += `<tr><td colspan="4"><span class="faint">${esc(msg)}</span></td></tr>`; });
-            if (stations.length > 1) html += row('Gauge average', 'Daily mean of the gauges that reported', seriesTotals(gaugeSeries, today));
+            const used = stations.filter(s => !s.excluded).length;
+            if (used > 1) html += row('Gauge average', 'Daily mean of the gauges that reported', seriesTotals(gaugeSeries, today));
+            else if (stations.length && !used) html += `<tr><td colspan="4"><span class="faint">No gauge within ${MODEL_TOLERANCE * 100}% of the model, so the averages use the model only</span></td></tr>`;
             html += om
                 ? row('Open-Meteo model', 'Reanalysis at ZIP center', [om.last, om.mtd, om.ytd])
                 : `<tr><td colspan="4"><span class="error">Model unavailable: ${esc(omErr.message)}</span></td></tr>`;
@@ -1107,8 +1131,8 @@
                 ? L.polygon(polys.map(p => p.map(ring => ring.map(([x, y]) => [y, x]))), { color: '#e6edf3', weight: 1.5, opacity: 0.7, fill: false, dashArray: '4 4' }).addTo(mapLayers)
                 : null;
             stations.forEach(st => {
-                L.circleMarker([st.lat, st.lon], { radius: 5, color: '#0d1117', weight: 2, fillColor: '#e6edf3', fillOpacity: 1 })
-                    .bindTooltip(`${st.station} · ${st.name}`, { direction: 'top' }).addTo(mapLayers);
+                L.circleMarker([st.lat, st.lon], { radius: 5, color: '#0d1117', weight: 2, fillColor: st.excluded ? '#6b7785' : '#e6edf3', fillOpacity: 1 })
+                    .bindTooltip(`${st.station} · ${st.name}${st.excluded ? ' (excluded)' : ''}`, { direction: 'top' }).addTo(mapLayers);
             });
             if (outline) map.fitBounds(outline.getBounds(), { padding: [20, 20], maxZoom: 9 });
             else map.setView([loc.lat, loc.lon], 8);
@@ -1216,8 +1240,14 @@
                 const normals = normRes.status === 'fulfilled' ? normRes.value : null;
 
                 // Averages are built day by day from whichever sources reported, so gaps don't count as dry
-                const gaugeSeries = stations.length ? buildDailySeries(today, stations, null) : [];
-                const series = buildDailySeries(today, stations, om);
+                // Gauges that disagree with the model by more than the tolerance are left out of every average
+                stations.forEach(st => {
+                    st.vsModel = om ? gaugeVsModel(st, om) : null;
+                    st.excluded = st.vsModel != null && Math.abs(st.vsModel) > MODEL_TOLERANCE;
+                });
+                const usedStations = stations.filter(st => !st.excluded);
+                const gaugeSeries = usedStations.length ? buildDailySeries(today, usedStations, null) : [];
+                const series = buildDailySeries(today, usedStations, om);
 
                 renderHero(series, normals, normRes.reason);
                 renderDaily(series);
