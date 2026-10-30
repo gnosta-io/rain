@@ -94,6 +94,21 @@
         .updated { font-size: 0.75rem; color: var(--text-3); }
         .updated .error { color: var(--alert); }
 
+        .controls { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+        .locate {
+            width: 36px; height: 36px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: var(--surface-2);
+            color: var(--text-2);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+        }
+        .locate:hover { color: var(--text); }
+        .locate.on { color: var(--rain); border-color: rgba(78, 168, 255, 0.5); }
+        .locate.busy svg { animation: pulse 1s infinite ease-in-out; }
+        @keyframes pulse { 50% { opacity: 0.3; } }
+
         .zip-form {
             display: flex;
             align-items: center;
@@ -395,11 +410,19 @@
                 <h1 id="place">Rain Dashboard</h1>
                 <div class="updated" id="updated">Loading…</div>
             </div>
+            <div class="controls">
+            <button type="button" class="locate" id="locate" aria-label="Use my location" title="Use my location">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+                    <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+                </svg>
+            </button>
             <form class="zip-form" id="zip-form">
                 <label for="zip-input">ZIP</label>
                 <input type="text" id="zip-input" value="85937" inputmode="numeric" pattern="\d{5}" maxlength="5" autocomplete="postal-code" enterkeyhint="go">
                 <button type="submit" id="zip-button" aria-label="Load ZIP">→</button>
             </form>
+            </div>
         </div>
     </header>
 
@@ -1216,17 +1239,94 @@
             }
         }
 
+        // ---------- location detection ----------
+
+        const store = {
+            get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+            set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } }
+        };
+
+        function getPosition() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) return reject(new Error('Location not supported'));
+                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, maximumAge: 30 * 60 * 1000 });
+            });
+        }
+
+        // The Census ZIP area (ZCTA) containing a point
+        async function zipAt(lat, lon) {
+            const q = new URLSearchParams({
+                geometry: `${lon},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326',
+                spatialRel: 'esriSpatialRelIntersects', outFields: 'ZCTA5', returnGeometry: 'false', f: 'json'
+            });
+            const data = await getJson(`https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1/query?${q}`);
+            const zip = data.features && data.features[0] && data.features[0].attributes.ZCTA5;
+            if (!zip) throw new Error('No US ZIP at your location');
+            return zip;
+        }
+
+        async function detectZip() {
+            $('locate').classList.add('busy');
+            try {
+                const pos = await getPosition();
+                return await zipAt(pos.coords.latitude, pos.coords.longitude);
+            } finally {
+                $('locate').classList.remove('busy');
+            }
+        }
+
+        function setLocateOn(on) { $('locate').classList.toggle('on', on); }
+
+        async function locationPermission() {
+            try { return (await navigator.permissions.query({ name: 'geolocation' })).state; } catch (e) { return 'prompt'; }
+        }
+
+        $('locate').addEventListener('click', async () => {
+            $('updated').textContent = 'Finding your location…';
+            try {
+                const zip = await detectZip();
+                store.set('rain-zip-manual', null);
+                setLocateOn(true);
+                $('zip-input').value = zip;
+                updateLocationFromZip(zip);
+            } catch (e) {
+                $('updated').innerHTML = `<span class="error">${esc(e.code === 1 ? 'Location permission denied' : e.message)}</span>`;
+            }
+        });
+
         $('zip-form').addEventListener('submit', e => {
             e.preventDefault();
             $('zip-input').blur();
-            updateLocationFromZip($('zip-input').value.trim());
+            const zip = $('zip-input').value.trim();
+            // A typed ZIP sticks until the locate button is used again
+            if (/^\d{5}$/.test(zip)) { store.set('rain-zip-manual', '1'); setLocateOn(false); }
+            updateLocationFromZip(zip);
         });
 
-        let savedZip = null;
-        try { savedZip = localStorage.getItem('rain-zip'); } catch (e) { /* storage unavailable */ }
-        if (savedZip) $('zip-input').value = savedZip;
+        // On load: a ZIP the visitor typed wins; otherwise use their location, falling back to the last ZIP or the default
+        async function init() {
+            const saved = store.get('rain-zip');
+            const fallback = saved || $('zip-input').value.trim();
+            $('zip-input').value = fallback;
+            if (saved && store.get('rain-zip-manual')) return updateLocationFromZip(saved);
+
+            const permission = await locationPermission();
+            if (permission === 'denied') return updateLocationFromZip(fallback);
+            showSkeletons();
+            $('updated').textContent = 'Finding your location…';
+            try {
+                // Don't hang forever if the visitor ignores the permission prompt
+                const zip = await Promise.race([detectZip(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
+                setLocateOn(true);
+                $('zip-input').value = zip;
+                updateLocationFromZip(zip);
+            } catch (e) {
+                updateLocationFromZip(fallback);
+            }
+        }
+
         // Leaflet loads with `defer`, so wait for the document before the first load
-        window.addEventListener('DOMContentLoaded', () => updateLocationFromZip($('zip-input').value.trim()));
+        window.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
 </html>
