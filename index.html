@@ -47,7 +47,7 @@
             display: grid;
             gap: var(--gap);
             grid-template-columns: minmax(0, 1fr);
-            grid-template-areas: "alerts" "hero" "forecast" "daily" "ytd" "sources" "radar" "about";
+            grid-template-areas: "alerts" "hero" "forecast" "daily" "ytd" "radar" "about";
         }
 
         @media (min-width: 900px) {
@@ -59,9 +59,8 @@
                     "alerts alerts"
                     "hero hero"
                     "forecast forecast"
-                    "daily radar"
-                    "ytd ytd"
-                    "sources sources"
+                    "daily ytd"
+                    "radar radar"
                     "about about";
             }
         }
@@ -319,7 +318,8 @@
 
         /* ---------- sources table ---------- */
 
-        .sources { grid-area: sources; }
+        .sources { margin-top: 14px; color: var(--text); font-size: 0.875rem; }
+        .sources .card-head { margin-bottom: 8px; }
         .src-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
         .src-table th {
             font-size: 0.68rem;
@@ -354,6 +354,7 @@
             flex: 1;
             min-height: 260px;
         }
+        @media (min-width: 900px) { .radar-map { height: 400px; } }
         .radar-map .leaflet-container { width: 100%; height: 100%; background: var(--surface-2); font: inherit; }
         .radar-map .fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; color: var(--text-2); font-size: 0.85rem; }
         .radar-controls {
@@ -472,19 +473,18 @@
             <div class="ytd-chart" id="ytd-chart"></div>
         </section>
 
-        <section class="card sources">
-            <div class="card-head">
-                <div class="card-title">Sources</div>
-                <div class="card-meta">Inches · day is the latest 24 h</div>
-            </div>
-            <table class="src-table">
-                <thead><tr><th>Source</th><th>Day</th><th>MTD</th><th>YTD</th></tr></thead>
-                <tbody id="src-body"></tbody>
-            </table>
-        </section>
-
         <details class="card about">
             <summary>How this is calculated</summary>
+            <div class="sources">
+                <div class="card-head">
+                    <div class="card-title">Sources</div>
+                    <div class="card-meta">Inches · day is the latest 24 h</div>
+                </div>
+                <table class="src-table">
+                    <thead><tr><th>Source</th><th>Day</th><th>MTD</th><th>YTD</th></tr></thead>
+                    <tbody id="src-body"></tbody>
+                </table>
+            </div>
             <ul>
                 <li>Gauges are CoCoRaHS volunteer stations inside the ZIP's Census boundary (tigerweb.geo.census.gov), most active first. A gauge's morning report covers the previous 24 hours.</li>
                 <li>Each gauge's MTD/YTD totals only the days it reported; its completeness is shown under its name.</li>
